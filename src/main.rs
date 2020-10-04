@@ -228,14 +228,12 @@ fn run() -> Result<()> {
                 local_max_frequency = frequency;
             }
 
-            let color = HSLColor(184. / 255., 1.0, 1.0 - normalized_power as f64 * 0.5).filled();
-
             let rect = Rectangle::new(
                 [
                     (time, frequency + frequency_width),
                     (time + time_step_sec, frequency - frequency_width),
                 ],
-                color,
+                make_style(normalized_power),
             );
             plotting_area.draw(&rect).context("Rectangle")?;
         }
@@ -246,12 +244,22 @@ fn run() -> Result<()> {
                     (time, local_max_frequency + frequency_width),
                     (time + time_step_sec, local_max_frequency - frequency_width),
                 ],
-                HSLColor(184. / 255., 1.0, 0.5).filled(),
+                make_style(1.),
             ))
             .context("Max rectangle")?;
     }
 
     Ok(())
+}
+
+/// Creates a shape style depending on the energy level.
+fn make_style(level: f32) -> ShapeStyle {
+    debug_assert!(level >= 0. && level <= 1.);
+    // Level 0 => hue = 238, lightness =  0
+    // Level 1 => hue = 360, lightness = 100
+    let hue = (238. + (360. - 238.) * level) / 360.;
+    let lightness = level;
+    HSLColor(hue as f64, 1.0, lightness as f64).filled()
 }
 
 #[cfg(test)]
