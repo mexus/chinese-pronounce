@@ -29,6 +29,10 @@ struct Args {
 
     /// Input WAV file.
     input: PathBuf,
+
+    /// Output WAV file.
+    #[structopt(default_value = "frequencies.png")]
+    output: PathBuf,
 }
 
 fn main() {
@@ -53,6 +57,7 @@ fn run() -> Result<()> {
         maximal_frequency,
         input,
         decibels,
+        output,
     } = Args::from_args();
 
     let syllable = input
@@ -151,7 +156,7 @@ fn run() -> Result<()> {
         heat_map.push(power_per_frequency);
     }
 
-    let root = BitMapBackend::new("frequencies.png", (1280, 2 * 480)).into_drawing_area();
+    let root = BitMapBackend::new(&output, (1280, 2 * 480)).into_drawing_area();
     root.fill(&WHITE).context("Fill areas")?;
     let root = root.margin(10, 10, 10, 10);
 
