@@ -2,7 +2,7 @@ use anyhow::{ensure, Context, Result};
 use hound::{SampleFormat, WavReader, WavSpec};
 use plotters::prelude::*;
 use rustfft::{num_complex::Complex, num_traits::Zero, FFTplanner};
-use std::{ffi::OsStr, fs::File, path::PathBuf, process::exit, time::Duration};
+use std::{ffi::OsStr, fs::File, path::Path, path::PathBuf, process::exit, time::Duration};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -49,6 +49,14 @@ fn make_even(x: usize) -> usize {
     x + (x % 2 == 1) as usize
 }
 
+fn is_png(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .map(str::to_lowercase)
+        .map(|ext| ext == "png")
+        .unwrap_or(false)
+}
+
 fn run() -> Result<()> {
     let Args {
         time_step,
@@ -57,7 +65,7 @@ fn run() -> Result<()> {
         maximal_frequency,
         input,
         decibels,
-        output,
+        mut output,
     } = Args::from_args();
 
     let syllable = input
@@ -66,6 +74,20 @@ fn run() -> Result<()> {
         .with_context(|| format!("Unable to extract a file stem from {}", input.display()))?;
     let file = File::open(&input)
         .with_context(|| format!("Unable to open input '{}'", input.display()))?;
+
+    if output.is_dir() {
+        output = output.join(syllable).with_extension("png");
+    } else if output.file_name().is_some() {
+        if !is_png(&output) {
+            eprintln!("Warning: output file extension is not 'png'!")
+        }
+    } else {
+        std::fs::create_dir_all(&output)
+            .with_context(|| format!("Unable to create output directory {}", output.display()))?;
+        output = output.join(syllable).with_extension("png");
+    }
+    eprintln!("Result will be saved to {}", output.display());
+
     let wav =
         WavReader::new(file).with_context(|| format!("Unable to parse '{}'", input.display()))?;
     let WavSpec {
