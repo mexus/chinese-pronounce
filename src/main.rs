@@ -2,11 +2,27 @@ use anyhow::{ensure, Context, Result};
 use hound::{SampleFormat, WavReader, WavSpec};
 use plotters::prelude::*;
 use rustfft::{num_complex::Complex, num_traits::Zero, FFTplanner};
-use std::{ffi::OsStr, fs::File, path::PathBuf, process::exit};
+use std::{ffi::OsStr, fs::File, path::PathBuf, process::exit, time::Duration};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 struct Args {
+    /// Time step.
+    #[structopt(long, parse(try_from_str = humantime::parse_duration), default_value = "1ms")]
+    time_step: Duration,
+
+    /// Window size.
+    #[structopt(long = "window", parse(try_from_str = humantime::parse_duration), default_value = "30ms")]
+    window_duration: Duration,
+
+    /// Minimal frequency, Hz.
+    #[structopt(long = "min_freq", default_value = "100")]
+    minimal_frequency: usize,
+
+    /// Maximal frequency, Hz.
+    #[structopt(long = "max_freq", default_value = "1500")]
+    maximal_frequency: usize,
+
     /// Input WAV file.
     input: PathBuf,
 }
@@ -21,10 +37,20 @@ fn main() {
     }
 }
 
-fn run() -> Result<()> {
-    let Args { input } = Args::from_args();
+fn make_even(x: usize) -> usize {
+    x + (x % 2 == 1) as usize
+}
 
-    let stem = input
+fn run() -> Result<()> {
+    let Args {
+        time_step,
+        window_duration,
+        minimal_frequency,
+        maximal_frequency,
+        input,
+    } = Args::from_args();
+
+    let syllable = input
         .file_stem()
         .and_then(OsStr::to_str)
         .with_context(|| format!("Unable to extract a file stem from {}", input.display()))?;
@@ -63,13 +89,11 @@ fn run() -> Result<()> {
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("Unable to read a sample from '{}'", input.display()))?;
 
-    let time_step_points = {
-        let time_step_sec = 0.001f32; // 1ms
-        time_step_sec * sample_rate as f32
-    } as usize;
+    let time_step_points = (time_step.as_nanos() as f32 / 1e9 * sample_rate as f32) as usize;
     let time_step_sec = time_step_points as f32 / sample_rate as f32;
 
-    let windows_points = 2000usize;
+    let windows_points =
+        make_even((window_duration.as_nanos() as f32 / 1e9 * sample_rate as f32) as usize);
     let windows_sec = windows_points as f32 / sample_rate as f32;
     let frequency_width = 0.5f32 / windows_sec;
     println!(
@@ -83,9 +107,7 @@ fn run() -> Result<()> {
 
     let mut heat_map = vec![];
 
-    let min_frequency = 100;
-    let max_frequency = 2500.min(sample_rate / 2);
-    let mut max_value = 0f32;
+    let mut max_power = 0f32;
 
     for i in 0.. {
         let time_point = time_step_points * i;
@@ -104,22 +126,22 @@ fn run() -> Result<()> {
         let mut planner = FFTplanner::new(false);
         let fft = planner.plan_fft(windows_points);
         fft.process(&mut input, &mut output);
-        let values_per_frequency = output
+        let power_per_frequency = output
             .into_iter()
             .enumerate()
             .take(windows_points / 2)
             .filter_map(|(id, c)| {
                 let frequency = id as f32 / windows_sec;
-                if frequency > max_frequency as f32 || frequency < min_frequency as f32 {
+                if frequency > maximal_frequency as f32 || frequency < minimal_frequency as f32 {
                     None
                 } else {
-                    let value = (c.norm_sqr() / windows_points as f32).sqrt();
-                    max_value = max_value.max(value);
-                    Some(value)
+                    let power = c.norm_sqr() / windows_points as f32;
+                    max_power = max_power.max(power);
+                    Some(power)
                 }
             })
             .collect::<Vec<_>>();
-        heat_map.push(values_per_frequency);
+        heat_map.push(power_per_frequency);
     }
 
     let root = BitMapBackend::new("frequencies.png", (1280, 2 * 480)).into_drawing_area();
@@ -128,17 +150,17 @@ fn run() -> Result<()> {
 
     let mut chart = ChartBuilder::on(&root)
         .caption(
-            format!("{} frequencies heat map", stem),
+            format!("{} frequency power heat map", syllable),
             ("sans-serif", 40).into_font(),
         )
         .x_label_area_size(20)
         .y_label_area_size(40)
         .build_cartesian_2d(
             0f32..total_time,
-            (min_frequency as f32..max_frequency as f32 + 1.)
+            (minimal_frequency as f32..maximal_frequency as f32 + 1.)
                 .log_scale()
                 .with_key_points(
-                    (min_frequency..=max_frequency)
+                    (minimal_frequency..=maximal_frequency)
                         .filter_map(|val| {
                             if val < 500 && val % 100 == 0
                                 || val < 2000 && val % 200 == 0
@@ -170,19 +192,18 @@ fn run() -> Result<()> {
         let time = (time * time_step_points) as f32 / sample_rate as f32;
 
         let mut local_max_frequency = 0f32;
-        let mut local_max_value = 0f32;
-        for (id, value) in data_per_time.into_iter().enumerate() {
+        let mut local_max_power = 0f32;
+        for (id, power) in data_per_time.into_iter().enumerate() {
             let frequency = id as f32 / windows_sec;
-            // println!("{:?}", frequency);
 
-            let value = value / max_value;
+            let power = power / max_power;
 
-            if value >= local_max_value {
-                local_max_value = value;
+            if power >= local_max_power {
+                local_max_power = power;
                 local_max_frequency = frequency;
             }
 
-            let color = HSLColor(184. / 255., 1.0, 1.0 - value as f64 * 0.5).filled();
+            let color = HSLColor(184. / 255., 1.0, 1.0 - power as f64 * 0.5).filled();
 
             let rect = Rectangle::new(
                 [
@@ -211,4 +232,16 @@ fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn check_make_even() {
+        assert_eq!(make_even(0), 0);
+        assert_eq!(make_even(1), 2);
+        assert_eq!(make_even(2), 2);
+    }
 }

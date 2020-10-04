@@ -11,3 +11,4 @@ structopt = "0.3"
 anyhow = "1"
 rustfft = "3"
 plotters = { version = "0.3.0" }
+humantime = "2"

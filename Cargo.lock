@@ -118,6 +118,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hound",
+ "humantime",
  "plotters",
  "rustfft",
  "structopt",
@@ -395,6 +396,12 @@ name = "hound"
 version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a164bb2ceaeff4f42542bdb847c41517c78a60f5649671b2a07312b6e117549"
+
+[[package]]
+name = "humantime"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c1ad908cc71012b7bea4d0c53ba96a8cba9962f048fa68d143376143d863b7a"
 
 [[package]]
 name = "image"
