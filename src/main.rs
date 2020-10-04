@@ -23,6 +23,10 @@ struct Args {
     #[structopt(long = "max_freq", default_value = "1500")]
     maximal_frequency: usize,
 
+    /// Output heat map in decibels.
+    #[structopt(long)]
+    decibels: bool,
+
     /// Input WAV file.
     input: PathBuf,
 }
@@ -48,6 +52,7 @@ fn run() -> Result<()> {
         minimal_frequency,
         maximal_frequency,
         input,
+        decibels,
     } = Args::from_args();
 
     let syllable = input
@@ -107,6 +112,7 @@ fn run() -> Result<()> {
 
     let mut heat_map = vec![];
 
+    let mut min_power = 1e9_f32;
     let mut max_power = 0f32;
 
     for i in 0.. {
@@ -137,6 +143,7 @@ fn run() -> Result<()> {
                 } else {
                     let power = c.norm_sqr() / windows_points as f32;
                     max_power = max_power.max(power);
+                    min_power = min_power.min(power);
                     Some(power)
                 }
             })
@@ -188,47 +195,55 @@ fn run() -> Result<()> {
 
     let plotting_area = chart.plotting_area();
 
+    let min_power = min_power.max(1f32);
+
+    let fn1;
+    let fn2;
+    let normalize_output: &dyn Fn(f32) -> f32 = if decibels {
+        let min_db = (min_power / max_power).log10() * 20f32;
+        fn1 = move |power: f32| ((power / max_power).log10() * 20f32 - min_db) / min_db.abs();
+        &fn1
+    } else {
+        fn2 = |power: f32| power / max_power;
+        &fn2
+    };
+
     for (time, data_per_time) in heat_map.into_iter().enumerate() {
         let time = (time * time_step_points) as f32 / sample_rate as f32;
 
         let mut local_max_frequency = 0f32;
         let mut local_max_power = 0f32;
+
         for (id, power) in data_per_time.into_iter().enumerate() {
             let frequency = id as f32 / windows_sec;
+            let normalized_power = normalize_output(power);
 
-            let power = power / max_power;
-
-            if power >= local_max_power {
-                local_max_power = power;
+            if normalized_power >= local_max_power {
+                local_max_power = normalized_power;
                 local_max_frequency = frequency;
             }
 
-            let color = HSLColor(184. / 255., 1.0, 1.0 - power as f64 * 0.5).filled();
+            let color = HSLColor(184. / 255., 1.0, 1.0 - normalized_power as f64 * 0.5).filled();
 
             let rect = Rectangle::new(
                 [
-                    (time, frequency + frequency_width / 2.),
-                    (time + time_step_sec, frequency - frequency_width / 2.),
+                    (time, frequency + frequency_width),
+                    (time + time_step_sec, frequency - frequency_width),
                 ],
                 color,
             );
             plotting_area.draw(&rect).context("Rectangle")?;
-            // plotting_area.draw_pixel((time, frequency), &color)?
         }
         // Mark the maximal point at this time frame.
         plotting_area
             .draw(&Rectangle::new(
                 [
-                    (time, local_max_frequency + frequency_width / 2.),
-                    (
-                        time + time_step_sec,
-                        local_max_frequency - frequency_width / 2.,
-                    ),
+                    (time, local_max_frequency + frequency_width),
+                    (time + time_step_sec, local_max_frequency - frequency_width),
                 ],
                 HSLColor(184. / 255., 1.0, 0.5).filled(),
             ))
             .context("Max rectangle")?;
-        // plotting_area.draw_pixel((time + time_step_sec, local_max_frequency), &RED)?
     }
 
     Ok(())
