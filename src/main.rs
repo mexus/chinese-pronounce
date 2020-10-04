@@ -1,10 +1,6 @@
 use anyhow::{ensure, Context, Result};
 use hound::{SampleFormat, WavReader, WavSpec};
-use plotters::{
-    prelude::BindKeyPoints, prelude::BitMapBackend, prelude::ChartBuilder,
-    prelude::IntoDrawingArea, prelude::IntoLogRange, prelude::LineSeries, style::HSLColor,
-    style::IntoFont, style::RED, style::WHITE,
-};
+use plotters::prelude::*;
 use rustfft::{num_complex::Complex, num_traits::Zero, FFTplanner};
 use std::{ffi::OsStr, fs::File, path::PathBuf, process::exit};
 use structopt::StructOpt;
@@ -56,9 +52,6 @@ fn run() -> Result<()> {
         bits_per_sample
     );
 
-    let mut min = 0;
-    let mut max = 0;
-
     let samples = wav.into_samples::<i16>();
 
     let total_samples = samples.len();
@@ -66,58 +59,32 @@ fn run() -> Result<()> {
     println!("Time = {}s, sample rate = {} Hz", total_time, sample_rate);
     let samples = samples
         .enumerate()
-        .map(|(id, sample)| {
-            sample.map(|sample| {
-                min = min.min(sample);
-                max = max.max(sample);
-                (id as f32 / sample_rate as f32, sample as f32)
-            })
-        })
+        .map(|(id, sample)| sample.map(|sample| (id as f32 / sample_rate as f32, sample as f32)))
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("Unable to read a sample from '{}'", input.display()))?;
 
-    let root = BitMapBackend::new("wav.png", (1280, 480)).into_drawing_area();
-    root.fill(&WHITE).context("Fill areas")?;
-    let root = root.margin(10, 10, 10, 10);
+    let time_step_points = {
+        let time_step_sec = 0.001f32; // 1ms
+        time_step_sec * sample_rate as f32
+    } as usize;
+    let time_step_sec = time_step_points as f32 / sample_rate as f32;
 
-    let mut chart = ChartBuilder::on(&root)
-        .caption(stem, ("sans-serif", 40).into_font())
-        .x_label_area_size(20)
-        .y_label_area_size(40)
-        .build_cartesian_2d(
-            0f32..samples.len() as f32 / sample_rate as f32,
-            min as f32..max as f32,
-        )
-        .context("Chart builder")?;
-
-    chart
-        .configure_mesh()
-        .x_labels(5)
-        .y_labels(5)
-        .x_desc("Time (s)")
-        .y_desc("Amplitude")
-        .draw()
-        .context("Mesh")?;
-
-    chart
-        .draw_series(LineSeries::new(samples.iter().copied(), &RED))
-        .context("Line series")?;
-
-    let time_step_points = 1;
-
-    let windows_points = 1000usize;
+    let windows_points = 2000usize;
     let windows_sec = windows_points as f32 / sample_rate as f32;
+    let frequency_width = 0.5f32 / windows_sec;
     println!(
-        "Scanning window: {} points ({:.2} ms); time step: {} points ({:.2} µs)",
+        "Scanning window: {} points ({:.2} ms, freq width = {}); time step: {} points ({:.2} µs)",
         windows_points,
-        windows_sec * 500.,
+        windows_sec * 1000.,
+        frequency_width,
         time_step_points,
         (time_step_points as f32 / sample_rate as f32) * 1e6
     );
 
     let mut heat_map = vec![];
 
-    let max_frequency = 3500.min(sample_rate / 2);
+    let min_frequency = 100;
+    let max_frequency = 2500.min(sample_rate / 2);
     let mut max_value = 0f32;
 
     for i in 0.. {
@@ -143,10 +110,10 @@ fn run() -> Result<()> {
             .take(windows_points / 2)
             .filter_map(|(id, c)| {
                 let frequency = id as f32 / windows_sec;
-                if frequency > max_frequency as f32 {
+                if frequency > max_frequency as f32 || frequency < min_frequency as f32 {
                     None
                 } else {
-                    let value = c.norm() / input.len() as f32;
+                    let value = (c.norm_sqr() / windows_points as f32).sqrt();
                     max_value = max_value.max(value);
                     Some(value)
                 }
@@ -168,10 +135,10 @@ fn run() -> Result<()> {
         .y_label_area_size(40)
         .build_cartesian_2d(
             0f32..total_time,
-            (100f32..max_frequency as f32 + 1.)
+            (min_frequency as f32..max_frequency as f32 + 1.)
                 .log_scale()
                 .with_key_points(
-                    (100..=max_frequency)
+                    (min_frequency..=max_frequency)
                         .filter_map(|val| {
                             if val < 500 && val % 100 == 0
                                 || val < 2000 && val % 200 == 0
@@ -202,22 +169,45 @@ fn run() -> Result<()> {
     for (time, data_per_time) in heat_map.into_iter().enumerate() {
         let time = (time * time_step_points) as f32 / sample_rate as f32;
 
-        let local_max_id = data_per_time
-            .iter()
-            .enumerate()
-            .max_by_key(|&(_id, value)| (value * 10_000.) as u32)
-            .map(|(id, _)| id)
-            .expect("At least one point is there :)");
+        let mut local_max_frequency = 0f32;
+        let mut local_max_value = 0f32;
         for (id, value) in data_per_time.into_iter().enumerate() {
-            let value = value / max_value;
             let frequency = id as f32 / windows_sec;
-            if id == local_max_id {
-                plotting_area.draw_pixel((time, frequency), &RED)?
-            } else {
-                let color = HSLColor(184. / 255., 1.0, 1.0 - value as f64 * 0.5);
-                plotting_area.draw_pixel((time, frequency), &color)?
+            // println!("{:?}", frequency);
+
+            let value = value / max_value;
+
+            if value >= local_max_value {
+                local_max_value = value;
+                local_max_frequency = frequency;
             }
+
+            let color = HSLColor(184. / 255., 1.0, 1.0 - value as f64 * 0.5).filled();
+
+            let rect = Rectangle::new(
+                [
+                    (time, frequency + frequency_width / 2.),
+                    (time + time_step_sec, frequency - frequency_width / 2.),
+                ],
+                color,
+            );
+            plotting_area.draw(&rect).context("Rectangle")?;
+            // plotting_area.draw_pixel((time, frequency), &color)?
         }
+        // Mark the maximal point at this time frame.
+        plotting_area
+            .draw(&Rectangle::new(
+                [
+                    (time, local_max_frequency + frequency_width / 2.),
+                    (
+                        time + time_step_sec,
+                        local_max_frequency - frequency_width / 2.,
+                    ),
+                ],
+                HSLColor(184. / 255., 1.0, 0.5).filled(),
+            ))
+            .context("Max rectangle")?;
+        // plotting_area.draw_pixel((time + time_step_sec, local_max_frequency), &RED)?
     }
 
     Ok(())
