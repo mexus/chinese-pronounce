@@ -24,7 +24,7 @@ struct Args {
     maximal_frequency: usize,
 
     /// Output heat map in decibels.
-    #[structopt(long)]
+    #[structopt(long = "db")]
     decibels: bool,
 
     /// Input WAV file.
