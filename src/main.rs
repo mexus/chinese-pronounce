@@ -179,13 +179,13 @@ fn run() -> Result<()> {
     }
 
     let root = BitMapBackend::new(&output, (1280, 2 * 480)).into_drawing_area();
-    root.fill(&WHITE).context("Fill areas")?;
+    root.fill(&BLACK).context("Fill areas")?;
     let root = root.margin(10, 10, 10, 10);
 
     let mut chart = ChartBuilder::on(&root)
         .caption(
             format!("{} frequency power heat map", syllable),
-            ("sans-serif", 40).into_font(),
+            ("sans-serif", 40).into_font().color(&WHITE),
         )
         .x_label_area_size(20)
         .y_label_area_size(40)
@@ -215,6 +215,7 @@ fn run() -> Result<()> {
         .x_labels(5)
         .x_desc("Time (s)")
         .y_desc("Frequency (Hz)")
+        .label_style(("sans-serif", 12).into_font().color(&WHITE))
         .y_labels(5)
         .disable_mesh()
         .draw()
