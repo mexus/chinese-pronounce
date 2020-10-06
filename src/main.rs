@@ -30,7 +30,7 @@ struct Args {
     /// Input WAV file.
     input: PathBuf,
 
-    /// Output WAV file.
+    /// Output frequency heat map (PNG).
     #[structopt(default_value = "frequencies.png")]
     output: PathBuf,
 }
