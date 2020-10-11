@@ -11,6 +11,9 @@ publish = false
 hound = "3"
 structopt = "0.3"
 anyhow = "1"
-rustfft = "3"
+rustfft = "4"
 plotters = "0.3.0"
 humantime = "2"
+itertools = "0.9"
+
+ndarray= "0.13"
